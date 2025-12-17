@@ -119,6 +119,7 @@ func New(cfg *config.Config, db *store.DB, logger *zap.Logger) http.Handler {
 	router.Use(middleware.Recovery(logger))
 	router.Use(middleware.SecurityHeaders)
 	router.Use(middleware.RequestID)
+	router.Use(middleware.LocaleMiddleware)
 	router.Use(corsMiddleware.Handle)
 	if cfg.Security.RateLimit.Enabled {
 		router.Use(middleware.RateLimit(rateLimiter))
