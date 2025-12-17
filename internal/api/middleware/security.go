@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 )
 
@@ -75,13 +77,14 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// generateRequestID generates a unique request ID
+// generateRequestID generates a cryptographically random request ID
 func generateRequestID() string {
-	// Simple implementation - in production, use a proper UUID library
-	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	result := make([]byte, 16)
-	for i := range result {
-		result[i] = chars[i%len(chars)]
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		// crypto/rand failure is extremely rare and indicates serious system issues
+		// In this case, we panic as the system is in an unsafe state
+		panic("crypto/rand: failed to generate random bytes: " + err.Error())
 	}
-	return string(result)
+	return hex.EncodeToString(b)
 }

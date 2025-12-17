@@ -11,6 +11,7 @@ import (
 
 	"github.com/xmpanel/xmpanel/internal/api/router"
 	"github.com/xmpanel/xmpanel/internal/config"
+	"github.com/xmpanel/xmpanel/internal/security/crypto"
 	"github.com/xmpanel/xmpanel/internal/store"
 
 	"go.uber.org/zap"
@@ -41,6 +42,23 @@ func main() {
 	// Run migrations
 	if err := store.Migrate(db); err != nil {
 		logger.Fatal("failed to run migrations", zap.Error(err))
+	}
+
+	// Create password hasher
+	hasher := crypto.NewArgon2Hasher(
+		cfg.Security.Password.Argon2Time,
+		cfg.Security.Password.Argon2Memory,
+		cfg.Security.Password.Argon2Threads,
+	)
+
+	// Ensure initial admin exists
+	initResult, err := store.EnsureInitialAdmin(db, hasher.Hash)
+	if err != nil {
+		logger.Fatal("failed to ensure initial admin", zap.Error(err))
+	}
+	if initResult.AdminCreated {
+		logger.Warn("initial admin created - please change the password immediately",
+			zap.String("username", initResult.AdminUsername))
 	}
 
 	// Initialize router
