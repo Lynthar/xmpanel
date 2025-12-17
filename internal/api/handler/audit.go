@@ -1,0 +1,332 @@
+package handler
+
+import (
+	"encoding/csv"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/xmpanel/xmpanel/internal/store"
+	"github.com/xmpanel/xmpanel/internal/store/models"
+
+	"go.uber.org/zap"
+)
+
+// AuditHandler handles audit log endpoints
+type AuditHandler struct {
+	db     *store.DB
+	logger *zap.Logger
+}
+
+// NewAuditHandler creates a new audit handler
+func NewAuditHandler(db *store.DB, logger *zap.Logger) *AuditHandler {
+	return &AuditHandler{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// List returns audit logs with filtering
+func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	query := `
+		SELECT id, user_id, username, action, resource_type, resource_id, details,
+		       ip_address, user_agent, request_id, prev_hash, hash, created_at
+		FROM audit_logs WHERE 1=1
+	`
+	args := make([]interface{}, 0)
+
+	if userID := r.URL.Query().Get("user_id"); userID != "" {
+		query += " AND user_id = ?"
+		args = append(args, userID)
+	}
+
+	if username := r.URL.Query().Get("username"); username != "" {
+		query += " AND username LIKE ?"
+		args = append(args, "%"+username+"%")
+	}
+
+	if action := r.URL.Query().Get("action"); action != "" {
+		query += " AND action = ?"
+		args = append(args, action)
+	}
+
+	if resourceType := r.URL.Query().Get("resource_type"); resourceType != "" {
+		query += " AND resource_type = ?"
+		args = append(args, resourceType)
+	}
+
+	if startTime := r.URL.Query().Get("start_time"); startTime != "" {
+		query += " AND created_at >= ?"
+		args = append(args, startTime)
+	}
+
+	if endTime := r.URL.Query().Get("end_time"); endTime != "" {
+		query += " AND created_at <= ?"
+		args = append(args, endTime)
+	}
+
+	// Order and pagination
+	query += " ORDER BY created_at DESC"
+
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+	query += " LIMIT ?"
+	args = append(args, limit)
+
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	query += " OFFSET ?"
+	args = append(args, offset)
+
+	// Execute query
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		h.logger.Error("failed to query audit logs", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+	defer rows.Close()
+
+	logs := make([]models.AuditLog, 0)
+	for rows.Next() {
+		var log models.AuditLog
+		err := rows.Scan(
+			&log.ID, &log.UserID, &log.Username, &log.Action, &log.ResourceType,
+			&log.ResourceID, &log.Details, &log.IPAddress, &log.UserAgent,
+			&log.RequestID, &log.PrevHash, &log.Hash, &log.CreatedAt,
+		)
+		if err != nil {
+			h.logger.Error("failed to scan audit log", zap.Error(err))
+			continue
+		}
+		logs = append(logs, log)
+	}
+
+	// Get total count
+	var total int
+	countQuery := "SELECT COUNT(*) FROM audit_logs WHERE 1=1"
+	h.db.QueryRow(countQuery).Scan(&total)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"data":   logs,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// Verify verifies the integrity of audit logs
+func (h *AuditHandler) Verify(w http.ResponseWriter, r *http.Request) {
+	// Get logs to verify
+	startID := int64(0)
+	endID := int64(0)
+
+	if s := r.URL.Query().Get("start_id"); s != "" {
+		startID, _ = strconv.ParseInt(s, 10, 64)
+	}
+	if e := r.URL.Query().Get("end_id"); e != "" {
+		endID, _ = strconv.ParseInt(e, 10, 64)
+	}
+
+	query := `
+		SELECT id, user_id, username, action, resource_type, resource_id, details,
+		       ip_address, user_agent, request_id, prev_hash, hash, created_at
+		FROM audit_logs WHERE 1=1
+	`
+	args := make([]interface{}, 0)
+
+	if startID > 0 {
+		query += " AND id >= ?"
+		args = append(args, startID)
+	}
+	if endID > 0 {
+		query += " AND id <= ?"
+		args = append(args, endID)
+	}
+
+	query += " ORDER BY id ASC LIMIT 10000"
+
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		h.logger.Error("failed to query audit logs", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+	defer rows.Close()
+
+	logs := make([]models.AuditLog, 0)
+	for rows.Next() {
+		var log models.AuditLog
+		err := rows.Scan(
+			&log.ID, &log.UserID, &log.Username, &log.Action, &log.ResourceType,
+			&log.ResourceID, &log.Details, &log.IPAddress, &log.UserAgent,
+			&log.RequestID, &log.PrevHash, &log.Hash, &log.CreatedAt,
+		)
+		if err != nil {
+			h.logger.Error("failed to scan audit log", zap.Error(err))
+			continue
+		}
+		logs = append(logs, log)
+	}
+
+	// Verify chain
+	valid, brokenAt, err := models.VerifyChain(logs)
+	if err != nil {
+		h.logger.Error("failed to verify audit chain", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	result := map[string]interface{}{
+		"valid":        valid,
+		"records_checked": len(logs),
+	}
+
+	if !valid {
+		result["broken_at_index"] = brokenAt
+		if brokenAt >= 0 && brokenAt < len(logs) {
+			result["broken_at_id"] = logs[brokenAt].ID
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// Export exports audit logs as CSV
+func (h *AuditHandler) Export(w http.ResponseWriter, r *http.Request) {
+	// Parse filters (same as List)
+	query := `
+		SELECT id, username, action, resource_type, resource_id, details,
+		       ip_address, created_at
+		FROM audit_logs WHERE 1=1
+	`
+	args := make([]interface{}, 0)
+
+	if action := r.URL.Query().Get("action"); action != "" {
+		query += " AND action = ?"
+		args = append(args, action)
+	}
+
+	if startTime := r.URL.Query().Get("start_time"); startTime != "" {
+		query += " AND created_at >= ?"
+		args = append(args, startTime)
+	}
+
+	if endTime := r.URL.Query().Get("end_time"); endTime != "" {
+		query += " AND created_at <= ?"
+		args = append(args, endTime)
+	}
+
+	query += " ORDER BY created_at DESC LIMIT 10000"
+
+	rows, err := h.db.Query(query, args...)
+	if err != nil {
+		h.logger.Error("failed to query audit logs", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+	defer rows.Close()
+
+	// Set headers for CSV download
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=audit_logs_"+time.Now().Format("20060102_150405")+".csv")
+
+	writer := csv.NewWriter(w)
+	defer writer.Flush()
+
+	// Write header
+	writer.Write([]string{"ID", "Username", "Action", "Resource Type", "Resource ID", "Details", "IP Address", "Timestamp"})
+
+	// Write data
+	for rows.Next() {
+		var (
+			id           int64
+			username     string
+			action       string
+			resourceType string
+			resourceID   string
+			details      string
+			ipAddress    string
+			createdAt    time.Time
+		)
+
+		err := rows.Scan(&id, &username, &action, &resourceType, &resourceID, &details, &ipAddress, &createdAt)
+		if err != nil {
+			continue
+		}
+
+		writer.Write([]string{
+			strconv.FormatInt(id, 10),
+			username,
+			action,
+			resourceType,
+			resourceID,
+			details,
+			ipAddress,
+			createdAt.Format(time.RFC3339),
+		})
+	}
+}
+
+// AuditService provides methods to write audit logs
+type AuditService struct {
+	db     *store.DB
+	logger *zap.Logger
+}
+
+// NewAuditService creates a new audit service
+func NewAuditService(db *store.DB, logger *zap.Logger) *AuditService {
+	return &AuditService{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// Log writes an audit log entry
+func (s *AuditService) Log(entry *models.AuditLogEntry) error {
+	// Get the previous hash
+	var prevHash string
+	err := s.db.QueryRow(`SELECT hash FROM audit_logs ORDER BY id DESC LIMIT 1`).Scan(&prevHash)
+	if err != nil && err.Error() != "sql: no rows in result set" {
+		s.logger.Warn("failed to get previous audit hash", zap.Error(err))
+	}
+
+	// Convert details to JSON
+	var detailsJSON string
+	if entry.Details != nil {
+		data, _ := json.Marshal(entry.Details)
+		detailsJSON = string(data)
+	}
+
+	// Get next ID (for hash computation)
+	var nextID int64
+	s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM audit_logs`).Scan(&nextID)
+
+	timestamp := time.Now()
+	hash := entry.ComputeHash(nextID, timestamp, prevHash)
+
+	// Insert audit log
+	_, err = s.db.Exec(`
+		INSERT INTO audit_logs (user_id, username, action, resource_type, resource_id,
+		                        details, ip_address, user_agent, request_id, prev_hash, hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, entry.UserID, entry.Username, entry.Action, entry.ResourceType, entry.ResourceID,
+		detailsJSON, entry.IPAddress, entry.UserAgent, entry.RequestID, prevHash, hash, timestamp)
+
+	if err != nil {
+		s.logger.Error("failed to write audit log", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
