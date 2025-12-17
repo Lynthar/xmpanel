@@ -1,11 +1,20 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	// MinJWTSecretLength is the minimum required length for JWT secret (256 bits)
+	MinJWTSecretLength = 32
 )
 
 // Config holds all configuration for the application
@@ -79,11 +88,13 @@ type PasswordConfig struct {
 
 // RateLimitConfig holds rate limiting configuration
 type RateLimitConfig struct {
-	Enabled       bool          `yaml:"enabled"`
-	RequestsPerSecond float64   `yaml:"requests_per_second"`
-	Burst         int           `yaml:"burst"`
-	LoginAttempts int           `yaml:"login_attempts"`
-	LoginWindow   time.Duration `yaml:"login_window"`
+	Enabled           bool          `yaml:"enabled"`
+	RequestsPerSecond float64       `yaml:"requests_per_second"`
+	Burst             int           `yaml:"burst"`
+	LoginAttempts     int           `yaml:"login_attempts"`
+	LoginWindow       time.Duration `yaml:"login_window"`
+	TrustedProxies    []string      `yaml:"trusted_proxies"`    // List of trusted proxy IPs/CIDRs
+	TrustXForwardedFor bool         `yaml:"trust_x_forwarded_for"` // If false, always use RemoteAddr
 }
 
 // CORSConfig holds CORS configuration
@@ -122,7 +133,11 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultConfig(), nil
+			cfg := DefaultConfig()
+			if err := cfg.Validate(); err != nil {
+				return nil, err
+			}
+			return cfg, nil
 		}
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -135,7 +150,58 @@ func Load() (*Config, error) {
 	// Apply defaults for missing values
 	applyDefaults(&cfg)
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// Validate validates the configuration and returns an error if invalid
+func (c *Config) Validate() error {
+	// Validate JWT secret
+	if c.Security.JWT.Secret == "" {
+		// Generate a random secret and warn user
+		secret, err := generateRandomSecret(MinJWTSecretLength)
+		if err != nil {
+			return fmt.Errorf("failed to generate JWT secret: %w", err)
+		}
+		c.Security.JWT.Secret = secret
+		log.Printf("WARNING: No JWT secret configured. Generated random secret. " +
+			"Sessions will be invalidated on restart. Set security.jwt.secret in config for persistence.")
+	} else if len(c.Security.JWT.Secret) < MinJWTSecretLength {
+		return errors.New("JWT secret must be at least 32 characters (256 bits) for security")
+	}
+
+	// Validate database encryption key
+	if c.Database.EncryptionKey == "" {
+		key, err := generateRandomSecret(32)
+		if err != nil {
+			return fmt.Errorf("failed to generate encryption key: %w", err)
+		}
+		c.Database.EncryptionKey = base64.StdEncoding.EncodeToString([]byte(key))
+		log.Printf("WARNING: No database encryption key configured. Generated random key. " +
+			"Encrypted data will be unreadable after restart. Set database.encryption_key in config for persistence.")
+	}
+
+	// Validate CORS configuration - disallow credentials with wildcard origin
+	for _, origin := range c.Security.CORS.AllowedOrigins {
+		if origin == "*" && c.Security.CORS.AllowCredentials {
+			return errors.New("CORS: cannot use wildcard origin (*) with allow_credentials=true")
+		}
+	}
+
+	return nil
+}
+
+// generateRandomSecret generates a cryptographically secure random string
+func generateRandomSecret(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
 }
 
 // DefaultConfig returns a configuration with sensible defaults
