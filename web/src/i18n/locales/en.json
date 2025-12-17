@@ -1,0 +1,252 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "filter": "Filter",
+    "export": "Export",
+    "refresh": "Refresh",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
+    "submit": "Submit",
+    "reset": "Reset",
+    "yes": "Yes",
+    "no": "No",
+    "actions": "Actions",
+    "status": "Status",
+    "name": "Name",
+    "type": "Type",
+    "date": "Date",
+    "time": "Time",
+    "details": "Details",
+    "description": "Description",
+    "noData": "No data available",
+    "error": "Error",
+    "success": "Success",
+    "warning": "Warning",
+    "info": "Information"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "servers": "Servers",
+    "users": "Users",
+    "audit": "Audit Logs",
+    "settings": "Settings",
+    "logout": "Logout"
+  },
+  "auth": {
+    "login": "Login",
+    "logout": "Logout",
+    "username": "Username",
+    "password": "Password",
+    "email": "Email",
+    "rememberMe": "Remember me",
+    "forgotPassword": "Forgot password?",
+    "loginTitle": "Sign in to your account",
+    "loginButton": "Sign in",
+    "loggingIn": "Signing in...",
+    "mfaTitle": "Two-Factor Authentication",
+    "mfaDescription": "Enter the verification code from your authenticator app",
+    "mfaCode": "Verification Code",
+    "mfaVerify": "Verify",
+    "mfaSetup": "Set up Two-Factor Authentication",
+    "mfaEnable": "Enable MFA",
+    "mfaDisable": "Disable MFA",
+    "mfaScanQR": "Scan this QR code with your authenticator app",
+    "mfaEnterCode": "Enter the code from your authenticator app to verify",
+    "mfaRecoveryCodes": "Recovery Codes",
+    "mfaRecoveryCodesDesc": "Save these recovery codes in a safe place. You can use them to access your account if you lose your authenticator.",
+    "changePassword": "Change Password",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "confirmPassword": "Confirm Password",
+    "passwordRequirements": "Password must be at least 12 characters and include uppercase, lowercase, number, and special character",
+    "invalidCredentials": "Invalid username or password",
+    "accountLocked": "Account is locked due to too many failed attempts",
+    "sessionExpired": "Your session has expired. Please login again."
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "totalServers": "Total Servers",
+    "onlineServers": "Online Servers",
+    "totalUsers": "Total XMPP Users",
+    "activeSessions": "Active Sessions",
+    "recentActivity": "Recent Activity",
+    "serverStatus": "Server Status",
+    "quickActions": "Quick Actions",
+    "addServer": "Add Server",
+    "viewAuditLogs": "View Audit Logs"
+  },
+  "servers": {
+    "title": "Servers",
+    "addServer": "Add Server",
+    "editServer": "Edit Server",
+    "deleteServer": "Delete Server",
+    "serverName": "Server Name",
+    "serverType": "Server Type",
+    "hostname": "Hostname",
+    "port": "Port",
+    "apiEndpoint": "API Endpoint",
+    "apiKey": "API Key",
+    "domain": "Domain",
+    "status": "Status",
+    "online": "Online",
+    "offline": "Offline",
+    "unknown": "Unknown",
+    "testConnection": "Test Connection",
+    "testSuccess": "Connection test successful",
+    "testFailed": "Connection test failed",
+    "prosody": "Prosody",
+    "ejabberd": "ejabberd",
+    "confirmDelete": "Are you sure you want to delete this server?",
+    "deleteWarning": "This action cannot be undone. All server data will be removed.",
+    "stats": {
+      "title": "Server Statistics",
+      "registeredUsers": "Registered Users",
+      "onlineUsers": "Online Users",
+      "totalRooms": "Chat Rooms",
+      "uptime": "Uptime",
+      "s2sConnections": "S2S Connections",
+      "c2sConnections": "C2S Connections"
+    }
+  },
+  "xmpp": {
+    "users": {
+      "title": "XMPP Users",
+      "addUser": "Add User",
+      "deleteUser": "Delete User",
+      "kickUser": "Kick User",
+      "username": "Username",
+      "jid": "JID",
+      "registeredAt": "Registered At",
+      "lastLogin": "Last Login",
+      "confirmDelete": "Are you sure you want to delete this XMPP user?",
+      "confirmKick": "Are you sure you want to kick this user from the server?"
+    },
+    "sessions": {
+      "title": "Active Sessions",
+      "jid": "JID",
+      "resource": "Resource",
+      "ip": "IP Address",
+      "connectedAt": "Connected At",
+      "priority": "Priority",
+      "kick": "Terminate Session",
+      "confirmKick": "Are you sure you want to terminate this session?"
+    },
+    "rooms": {
+      "title": "Chat Rooms",
+      "addRoom": "Create Room",
+      "deleteRoom": "Delete Room",
+      "roomName": "Room Name",
+      "roomJid": "Room JID",
+      "subject": "Subject",
+      "persistent": "Persistent",
+      "public": "Public",
+      "membersOnly": "Members Only",
+      "participants": "Participants",
+      "confirmDelete": "Are you sure you want to delete this chat room?"
+    }
+  },
+  "users": {
+    "title": "Admin Users",
+    "addUser": "Add User",
+    "editUser": "Edit User",
+    "deleteUser": "Delete User",
+    "username": "Username",
+    "email": "Email",
+    "role": "Role",
+    "mfaEnabled": "MFA Enabled",
+    "lastLogin": "Last Login",
+    "createdAt": "Created At",
+    "roles": {
+      "superadmin": "Super Admin",
+      "admin": "Admin",
+      "operator": "Operator",
+      "viewer": "Viewer"
+    },
+    "confirmDelete": "Are you sure you want to delete this user?",
+    "cannotDeleteSelf": "You cannot delete your own account"
+  },
+  "audit": {
+    "title": "Audit Logs",
+    "action": "Action",
+    "user": "User",
+    "resourceType": "Resource Type",
+    "resourceId": "Resource ID",
+    "ipAddress": "IP Address",
+    "timestamp": "Timestamp",
+    "details": "Details",
+    "filters": {
+      "title": "Filters",
+      "action": "Action",
+      "user": "User",
+      "startDate": "Start Date",
+      "endDate": "End Date",
+      "resourceType": "Resource Type"
+    },
+    "verify": {
+      "title": "Verify Integrity",
+      "button": "Verify Chain",
+      "valid": "Audit log chain is valid",
+      "invalid": "Audit log chain integrity check failed",
+      "brokenAt": "Chain broken at record"
+    },
+    "export": {
+      "button": "Export CSV",
+      "success": "Audit logs exported successfully"
+    },
+    "actions": {
+      "login": "Login",
+      "logout": "Logout",
+      "create": "Create",
+      "update": "Update",
+      "delete": "Delete"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "profile": {
+      "title": "Profile",
+      "username": "Username",
+      "email": "Email",
+      "role": "Role"
+    },
+    "security": {
+      "title": "Security",
+      "changePassword": "Change Password",
+      "mfa": "Two-Factor Authentication",
+      "sessions": "Active Sessions",
+      "revokeAll": "Revoke All Sessions"
+    },
+    "preferences": {
+      "title": "Preferences",
+      "language": "Language",
+      "theme": "Theme",
+      "dark": "Dark",
+      "light": "Light",
+      "system": "System"
+    }
+  },
+  "errors": {
+    "generic": "An error occurred. Please try again.",
+    "network": "Network error. Please check your connection.",
+    "unauthorized": "You are not authorized to perform this action.",
+    "forbidden": "Access denied.",
+    "notFound": "Resource not found.",
+    "validation": "Please check the form for errors.",
+    "serverError": "Server error. Please try again later."
+  },
+  "validation": {
+    "required": "This field is required",
+    "email": "Please enter a valid email address",
+    "minLength": "Must be at least {{min}} characters",
+    "maxLength": "Must be at most {{max}} characters",
+    "passwordMatch": "Passwords do not match"
+  }
+}
