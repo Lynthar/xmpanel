@@ -1,7 +1,9 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -10,12 +12,14 @@ import (
 
 // RateLimiter implements a token bucket rate limiter
 type RateLimiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*bucket
-	rate     float64
-	burst    int
-	cleanup  time.Duration
-	lastClean time.Time
+	mu                 sync.Mutex
+	buckets            map[string]*bucket
+	rate               float64
+	burst              int
+	cleanup            time.Duration
+	lastClean          time.Time
+	trustedProxies     []*net.IPNet
+	trustXForwardedFor bool
 }
 
 type bucket struct {
@@ -25,13 +29,32 @@ type bucket struct {
 
 // NewRateLimiter creates a new rate limiter
 func NewRateLimiter(cfg config.RateLimitConfig) *RateLimiter {
-	return &RateLimiter{
-		buckets:   make(map[string]*bucket),
-		rate:      cfg.RequestsPerSecond,
-		burst:     cfg.Burst,
-		cleanup:   5 * time.Minute,
-		lastClean: time.Now(),
+	rl := &RateLimiter{
+		buckets:            make(map[string]*bucket),
+		rate:               cfg.RequestsPerSecond,
+		burst:              cfg.Burst,
+		cleanup:            5 * time.Minute,
+		lastClean:          time.Now(),
+		trustXForwardedFor: cfg.TrustXForwardedFor,
 	}
+
+	// Parse trusted proxies
+	for _, proxy := range cfg.TrustedProxies {
+		// Handle single IPs by adding /32 or /128
+		if !strings.Contains(proxy, "/") {
+			if strings.Contains(proxy, ":") {
+				proxy += "/128"
+			} else {
+				proxy += "/32"
+			}
+		}
+		_, network, err := net.ParseCIDR(proxy)
+		if err == nil {
+			rl.trustedProxies = append(rl.trustedProxies, network)
+		}
+	}
+
+	return rl
 }
 
 // Allow checks if a request from the given key should be allowed
@@ -85,7 +108,7 @@ func (rl *RateLimiter) cleanupBuckets() {
 func RateLimit(limiter *RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := getClientIP(r)
+			key := limiter.getClientIP(r)
 
 			if !limiter.Allow(key) {
 				w.Header().Set("Retry-After", "1")
@@ -174,33 +197,83 @@ func (lr *LoginRateLimiter) RecordSuccess(key string) {
 	delete(lr.attempts, key)
 }
 
-// getClientIP extracts the client IP from the request
-func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For header (if behind proxy)
+// getClientIP extracts the client IP from the request, validating proxy headers
+func (rl *RateLimiter) getClientIP(r *http.Request) string {
+	remoteIP := extractIP(r.RemoteAddr)
+
+	// If X-Forwarded-For trust is disabled, always use RemoteAddr
+	if !rl.trustXForwardedFor {
+		return remoteIP
+	}
+
+	// Only trust X-Forwarded-For if request comes from a trusted proxy
+	if !rl.isTrustedProxy(remoteIP) {
+		return remoteIP
+	}
+
+	// Check X-Forwarded-For header
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff != "" {
+		// X-Forwarded-For can contain multiple IPs: client, proxy1, proxy2, ...
 		// Take the first IP (original client)
-		for i := 0; i < len(xff); i++ {
-			if xff[i] == ',' {
-				return xff[:i]
+		ips := strings.Split(xff, ",")
+		if len(ips) > 0 {
+			clientIP := strings.TrimSpace(ips[0])
+			if clientIP != "" {
+				return clientIP
 			}
 		}
-		return xff
 	}
 
 	// Check X-Real-IP header
 	xri := r.Header.Get("X-Real-IP")
 	if xri != "" {
-		return xri
+		return strings.TrimSpace(xri)
 	}
 
-	// Fall back to RemoteAddr
-	// Strip port if present
-	addr := r.RemoteAddr
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[:i]
+	return remoteIP
+}
+
+// isTrustedProxy checks if the given IP is in the trusted proxies list
+func (rl *RateLimiter) isTrustedProxy(ip string) bool {
+	if len(rl.trustedProxies) == 0 {
+		return false
+	}
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+
+	for _, network := range rl.trustedProxies {
+		if network.Contains(parsedIP) {
+			return true
 		}
 	}
+
+	return false
+}
+
+// extractIP extracts the IP address from an address string (removes port)
+func extractIP(addr string) string {
+	// Handle IPv6 addresses in brackets
+	if strings.HasPrefix(addr, "[") {
+		if idx := strings.Index(addr, "]"); idx != -1 {
+			return addr[1:idx]
+		}
+	}
+
+	// Handle host:port format
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil {
+		return host
+	}
+
 	return addr
+}
+
+// GetClientIP is a standalone function for use outside rate limiter
+// This function does NOT trust proxy headers by default for security
+func GetClientIP(r *http.Request) string {
+	return extractIP(r.RemoteAddr)
 }

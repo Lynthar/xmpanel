@@ -1,8 +1,11 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/xmpanel/xmpanel/internal/config"
@@ -50,6 +53,82 @@ func NewDB(cfg config.DatabaseConfig) (*DB, error) {
 	}
 
 	return &DB{db}, nil
+}
+
+// PasswordHasher is a function type for hashing passwords
+type PasswordHasher func(password string) (string, error)
+
+// InitResult contains the result of database initialization
+type InitResult struct {
+	AdminCreated    bool
+	AdminUsername   string
+	AdminPassword   string // Only set if newly generated
+}
+
+// EnsureInitialAdmin creates the initial superadmin if no users exist
+// Returns the credentials if a new admin was created
+func EnsureInitialAdmin(db *DB, hasher PasswordHasher) (*InitResult, error) {
+	result := &InitResult{}
+
+	// Check if any users exist
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check users: %w", err)
+	}
+
+	if count > 0 {
+		// Users exist, nothing to do
+		return result, nil
+	}
+
+	// Generate a secure random password
+	password, err := generateSecurePassword(16)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate password: %w", err)
+	}
+
+	// Hash the password
+	passwordHash, err := hasher(password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Create the initial superadmin
+	_, err = db.Exec(`
+		INSERT INTO users (username, email, password_hash, role, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, "admin", "admin@localhost", passwordHash, "superadmin", time.Now(), time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create initial admin: %w", err)
+	}
+
+	result.AdminCreated = true
+	result.AdminUsername = "admin"
+	result.AdminPassword = password
+
+	log.Printf("========================================")
+	log.Printf("INITIAL ADMIN ACCOUNT CREATED")
+	log.Printf("Username: %s", result.AdminUsername)
+	log.Printf("Password: %s", result.AdminPassword)
+	log.Printf("IMPORTANT: Change this password immediately!")
+	log.Printf("========================================")
+
+	return result, nil
+}
+
+// generateSecurePassword generates a cryptographically secure password
+func generateSecurePassword(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	// Use URL-safe base64 encoding and take the first 'length' characters
+	password := base64.URLEncoding.EncodeToString(bytes)
+	if len(password) > length {
+		password = password[:length]
+	}
+	return password, nil
 }
 
 // Migrate runs database migrations

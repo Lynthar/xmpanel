@@ -9,6 +9,7 @@ import (
 	"github.com/xmpanel/xmpanel/internal/api/middleware"
 	"github.com/xmpanel/xmpanel/internal/auth"
 	"github.com/xmpanel/xmpanel/internal/security/crypto"
+	"github.com/xmpanel/xmpanel/internal/security/password"
 	"github.com/xmpanel/xmpanel/internal/store"
 	"github.com/xmpanel/xmpanel/internal/store/models"
 
@@ -17,12 +18,13 @@ import (
 
 // AuthHandler handles authentication endpoints
 type AuthHandler struct {
-	db           *store.DB
-	jwtManager   *auth.JWTManager
-	hasher       *crypto.Argon2Hasher
-	totpManager  *auth.TOTPManager
-	loginLimiter *middleware.LoginRateLimiter
-	logger       *zap.Logger
+	db                *store.DB
+	jwtManager        *auth.JWTManager
+	hasher            *crypto.Argon2Hasher
+	passwordValidator *password.Validator
+	totpManager       *auth.TOTPManager
+	loginLimiter      *middleware.LoginRateLimiter
+	logger            *zap.Logger
 }
 
 // NewAuthHandler creates a new auth handler
@@ -30,16 +32,18 @@ func NewAuthHandler(
 	db *store.DB,
 	jwtManager *auth.JWTManager,
 	hasher *crypto.Argon2Hasher,
+	passwordValidator *password.Validator,
 	loginLimiter *middleware.LoginRateLimiter,
 	logger *zap.Logger,
 ) *AuthHandler {
 	return &AuthHandler{
-		db:           db,
-		jwtManager:   jwtManager,
-		hasher:       hasher,
-		totpManager:  auth.NewTOTPManager("XMPanel"),
-		loginLimiter: loginLimiter,
-		logger:       logger,
+		db:                db,
+		jwtManager:        jwtManager,
+		hasher:            hasher,
+		passwordValidator: passwordValidator,
+		totpManager:       auth.NewTOTPManager("XMPanel"),
+		loginLimiter:      loginLimiter,
+		logger:            logger,
 	}
 }
 
@@ -186,7 +190,8 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenPair, err := h.jwtManager.RefreshAccessToken(req.RefreshToken)
+	// First validate the refresh token
+	claims, err := h.jwtManager.ValidateToken(req.RefreshToken, auth.TokenTypeRefresh)
 	if err != nil {
 		switch err {
 		case auth.ErrExpiredToken:
@@ -196,6 +201,60 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	// Check if session still exists in database (hasn't been revoked)
+	var exists int
+	err = h.db.QueryRow(`SELECT 1 FROM sessions WHERE session_id = ? AND user_id = ?`,
+		claims.SessionID, claims.UserID).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Session has been revoked (user logged out or password changed)
+			writeError(w, http.StatusUnauthorized, "Session has been revoked")
+			return
+		}
+		h.logger.Error("failed to check session", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	// Check if user account is still valid
+	var userRole string
+	var lockedUntil sql.NullTime
+	err = h.db.QueryRow(`SELECT role, locked_until FROM users WHERE id = ?`, claims.UserID).
+		Scan(&userRole, &lockedUntil)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusUnauthorized, "User not found")
+			return
+		}
+		h.logger.Error("failed to check user", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	// Check if account is locked
+	if lockedUntil.Valid && lockedUntil.Time.After(time.Now()) {
+		writeError(w, http.StatusForbidden, "Account is locked")
+		return
+	}
+
+	// Generate new token pair with current role (in case it changed)
+	tokenPair, err := h.jwtManager.GenerateTokenPair(
+		claims.UserID,
+		claims.Username,
+		userRole, // Use current role from DB
+		claims.SessionID,
+		claims.DeviceID,
+	)
+	if err != nil {
+		h.logger.Error("failed to generate tokens", zap.Error(err))
+		writeError(w, http.StatusInternalServerError, "Internal server error")
+		return
+	}
+
+	// Update session expiry
+	h.db.Exec(`UPDATE sessions SET expires_at = ? WHERE session_id = ?`,
+		tokenPair.ExpiresAt.Add(7*24*time.Hour), claims.SessionID)
 
 	writeJSON(w, http.StatusOK, tokenPair)
 }
@@ -402,9 +461,9 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate new password
-	if len(req.NewPassword) < 12 {
-		writeError(w, http.StatusBadRequest, "Password must be at least 12 characters")
+	// Validate new password against policy
+	if err := h.passwordValidator.Validate(req.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
