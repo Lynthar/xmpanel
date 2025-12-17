@@ -1,4 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
 import {
   LayoutDashboard,
@@ -9,19 +10,21 @@ import {
   LogOut,
   Menu,
   X,
+  Globe,
 } from 'lucide-react'
 import { useState } from 'react'
 import clsx from 'clsx'
 
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Servers', href: '/servers', icon: Server },
-  { name: 'Users', href: '/users', icon: Users },
-  { name: 'Audit Logs', href: '/audit', icon: FileText },
-  { name: 'Settings', href: '/settings', icon: Settings },
+const navigationItems = [
+  { key: 'dashboard', href: '/', icon: LayoutDashboard },
+  { key: 'servers', href: '/servers', icon: Server },
+  { key: 'users', href: '/users', icon: Users },
+  { key: 'audit', href: '/audit', icon: FileText },
+  { key: 'settings', href: '/settings', icon: Settings },
 ]
 
 export default function Layout() {
+  const { t, i18n } = useTranslation()
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -29,6 +32,11 @@ export default function Layout() {
   const handleLogout = () => {
     logout()
     navigate('/login')
+  }
+
+  const toggleLanguage = () => {
+    const newLang = i18n.language === 'en' ? 'zh' : 'en'
+    i18n.changeLanguage(newLang)
   }
 
   return (
@@ -62,9 +70,9 @@ export default function Layout() {
 
           {/* Navigation */}
           <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-            {navigation.map((item) => (
+            {navigationItems.map((item) => (
               <NavLink
-                key={item.name}
+                key={item.key}
                 to={item.href}
                 className={({ isActive }) =>
                   clsx('sidebar-link', isActive && 'sidebar-link-active')
@@ -72,7 +80,7 @@ export default function Layout() {
                 onClick={() => setSidebarOpen(false)}
               >
                 <item.icon className="w-5 h-5" />
-                {item.name}
+                {t(`nav.${item.key}`)}
               </NavLink>
             ))}
           </nav>
@@ -92,12 +100,20 @@ export default function Layout() {
                 <p className="text-xs text-gray-400 truncate">{user?.role}</p>
               </div>
             </div>
+            {/* Language switcher */}
+            <button
+              onClick={toggleLanguage}
+              className="sidebar-link w-full text-gray-400 hover:text-white"
+            >
+              <Globe className="w-5 h-5" />
+              {i18n.language === 'en' ? '中文' : 'English'}
+            </button>
             <button
               onClick={handleLogout}
               className="sidebar-link w-full text-red-400 hover:text-red-300 hover:bg-red-900/20"
             >
               <LogOut className="w-5 h-5" />
-              Logout
+              {t('nav.logout')}
             </button>
           </div>
         </div>

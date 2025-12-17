@@ -8,6 +8,7 @@ import (
 
 	"github.com/xmpanel/xmpanel/internal/api/middleware"
 	"github.com/xmpanel/xmpanel/internal/auth"
+	"github.com/xmpanel/xmpanel/internal/i18n"
 	"github.com/xmpanel/xmpanel/internal/security/crypto"
 	"github.com/xmpanel/xmpanel/internal/security/password"
 	"github.com/xmpanel/xmpanel/internal/store"
@@ -49,9 +50,11 @@ func NewAuthHandler(
 
 // Login handles user login
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
+
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgBadRequest)
 		return
 	}
 
@@ -60,7 +63,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	allowed, lockDuration := h.loginLimiter.Check(clientIP + ":" + req.Username)
 	if !allowed {
 		w.Header().Set("Retry-After", lockDuration.String())
-		writeError(w, http.StatusTooManyRequests, "Too many login attempts. Please try again later.")
+		writeErrorI18n(w, http.StatusTooManyRequests, locale, i18n.MsgRateLimitExceeded)
 		return
 	}
 
@@ -78,18 +81,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err == sql.ErrNoRows {
-		writeError(w, http.StatusUnauthorized, "Invalid credentials")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgInvalidCredentials)
 		return
 	}
 	if err != nil {
 		h.logger.Error("failed to query user", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
 	// Check if account is locked
 	if user.IsLocked() {
-		writeError(w, http.StatusForbidden, "Account is temporarily locked")
+		writeErrorI18n(w, http.StatusForbidden, locale, i18n.MsgAccountLocked)
 		return
 	}
 
@@ -102,7 +105,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			       locked_until = CASE WHEN failed_login_attempts >= 4 THEN datetime('now', '+15 minutes') ELSE locked_until END
 			WHERE id = ?
 		`, user.ID)
-		writeError(w, http.StatusUnauthorized, "Invalid credentials")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgInvalidCredentials)
 		return
 	}
 
@@ -120,7 +123,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		if user.MFASecret.Valid {
 			valid, err := h.totpManager.ValidateCode(user.MFASecret.String, req.TOTPCode)
 			if err != nil || !valid {
-				writeError(w, http.StatusUnauthorized, "Invalid MFA code")
+				writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgMFAInvalid)
 				return
 			}
 		}
@@ -130,7 +133,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	sessionID, err := crypto.GenerateRandomString(32)
 	if err != nil {
 		h.logger.Error("failed to generate session ID", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -144,7 +147,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		h.logger.Error("failed to generate tokens", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -182,11 +185,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Refresh handles token refresh
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
+
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgBadRequest)
 		return
 	}
 
@@ -195,9 +200,9 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch err {
 		case auth.ErrExpiredToken:
-			writeError(w, http.StatusUnauthorized, "Refresh token has expired")
+			writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgTokenExpired)
 		default:
-			writeError(w, http.StatusUnauthorized, "Invalid refresh token")
+			writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgTokenInvalid)
 		}
 		return
 	}
@@ -209,11 +214,11 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// Session has been revoked (user logged out or password changed)
-			writeError(w, http.StatusUnauthorized, "Session has been revoked")
+			writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgSessionRevoked)
 			return
 		}
 		h.logger.Error("failed to check session", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -224,17 +229,17 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		Scan(&userRole, &lockedUntil)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			writeError(w, http.StatusUnauthorized, "User not found")
+			writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgUserNotFound)
 			return
 		}
 		h.logger.Error("failed to check user", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
 	// Check if account is locked
 	if lockedUntil.Valid && lockedUntil.Time.After(time.Now()) {
-		writeError(w, http.StatusForbidden, "Account is locked")
+		writeErrorI18n(w, http.StatusForbidden, locale, i18n.MsgAccountLocked)
 		return
 	}
 
@@ -248,7 +253,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		h.logger.Error("failed to generate tokens", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -261,9 +266,10 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 // Logout handles user logout
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgUnauthorized)
 		return
 	}
 
@@ -273,14 +279,15 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to delete session", zap.Error(err))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": i18n.T(locale, i18n.MsgLogoutSuccess)})
 }
 
 // Me returns the current user info
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgUnauthorized)
 		return
 	}
 
@@ -294,7 +301,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, "User not found")
+		writeErrorI18n(w, http.StatusNotFound, locale, i18n.MsgUserNotFound)
 		return
 	}
 
@@ -303,9 +310,10 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 
 // SetupMFA initiates MFA setup
 func (h *AuthHandler) SetupMFA(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgUnauthorized)
 		return
 	}
 
@@ -313,7 +321,7 @@ func (h *AuthHandler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 	secret, err := h.totpManager.GenerateSecret(claims.Username)
 	if err != nil {
 		h.logger.Error("failed to generate TOTP secret", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -321,7 +329,7 @@ func (h *AuthHandler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 	_, err = h.db.Exec(`UPDATE users SET mfa_secret = ? WHERE id = ?`, secret.Secret, claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to store MFA secret", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -330,9 +338,10 @@ func (h *AuthHandler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 
 // VerifyMFA verifies and enables MFA
 func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgUnauthorized)
 		return
 	}
 
@@ -340,7 +349,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		Code string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgBadRequest)
 		return
 	}
 
@@ -348,14 +357,14 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	var secret sql.NullString
 	err := h.db.QueryRow(`SELECT mfa_secret FROM users WHERE id = ?`, claims.UserID).Scan(&secret)
 	if err != nil || !secret.Valid {
-		writeError(w, http.StatusBadRequest, "MFA not set up")
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgMFANotEnabled)
 		return
 	}
 
 	// Verify code
 	valid, err := h.totpManager.ValidateCode(secret.String, req.Code)
 	if err != nil || !valid {
-		writeError(w, http.StatusBadRequest, "Invalid verification code")
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgMFAInvalid)
 		return
 	}
 
@@ -363,7 +372,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	_, err = h.db.Exec(`UPDATE users SET mfa_enabled = 1 WHERE id = ?`, claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to enable MFA", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -372,7 +381,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	codes, err := recoveryManager.GenerateCodes()
 	if err != nil {
 		h.logger.Error("failed to generate recovery codes", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -386,16 +395,17 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":        "MFA enabled successfully",
+		"message":        i18n.T(locale, i18n.MsgMFASetupSuccess),
 		"recovery_codes": codes,
 	})
 }
 
 // DisableMFA disables MFA for the current user
 func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgUnauthorized)
 		return
 	}
 
@@ -404,7 +414,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 		Code     string `json:"code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgBadRequest)
 		return
 	}
 
@@ -414,13 +424,13 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	err := h.db.QueryRow(`SELECT password_hash, mfa_secret FROM users WHERE id = ?`, claims.UserID).
 		Scan(&passwordHash, &mfaSecret)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
 	valid, err := h.hasher.Verify(req.Password, passwordHash)
 	if err != nil || !valid {
-		writeError(w, http.StatusUnauthorized, "Invalid password")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgPasswordMismatch)
 		return
 	}
 
@@ -428,7 +438,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	if mfaSecret.Valid {
 		valid, err := h.totpManager.ValidateCode(mfaSecret.String, req.Code)
 		if err != nil || !valid {
-			writeError(w, http.StatusBadRequest, "Invalid MFA code")
+			writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgMFAInvalid)
 			return
 		}
 	}
@@ -437,18 +447,19 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	_, err = h.db.Exec(`UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, recovery_codes = NULL WHERE id = ?`, claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to disable MFA", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "MFA disabled successfully"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": i18n.T(locale, i18n.MsgMFADisabled)})
 }
 
 // ChangePassword handles password change
 func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	locale := middleware.GetLocale(r.Context())
 	claims := middleware.GetClaims(r.Context())
 	if claims == nil {
-		writeError(w, http.StatusUnauthorized, "Unauthorized")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgUnauthorized)
 		return
 	}
 
@@ -457,13 +468,13 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword     string `json:"new_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Invalid request body")
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgBadRequest)
 		return
 	}
 
 	// Validate new password against policy
 	if err := h.passwordValidator.Validate(req.NewPassword); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgPasswordWeak)
 		return
 	}
 
@@ -471,14 +482,14 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	var currentHash string
 	err := h.db.QueryRow(`SELECT password_hash FROM users WHERE id = ?`, claims.UserID).Scan(&currentHash)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
 	// Verify current password
 	valid, err := h.hasher.Verify(req.CurrentPassword, currentHash)
 	if err != nil || !valid {
-		writeError(w, http.StatusUnauthorized, "Current password is incorrect")
+		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgPasswordMismatch)
 		return
 	}
 
@@ -486,7 +497,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	newHash, err := h.hasher.Hash(req.NewPassword)
 	if err != nil {
 		h.logger.Error("failed to hash password", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -495,7 +506,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		newHash, time.Now(), claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to update password", zap.Error(err))
-		writeError(w, http.StatusInternalServerError, "Internal server error")
+		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
 	}
 
@@ -506,7 +517,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to invalidate sessions", zap.Error(err))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Password changed successfully"})
+	writeJSON(w, http.StatusOK, map[string]string{"message": i18n.T(locale, i18n.MsgPasswordChanged)})
 }
 
 // Helper functions
@@ -519,4 +530,8 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeErrorI18n(w http.ResponseWriter, status int, locale i18n.Locale, msgKey string) {
+	writeJSON(w, status, map[string]string{"error": i18n.T(locale, msgKey)})
 }
