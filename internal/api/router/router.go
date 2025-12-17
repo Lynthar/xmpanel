@@ -9,6 +9,7 @@ import (
 	"github.com/xmpanel/xmpanel/internal/auth"
 	"github.com/xmpanel/xmpanel/internal/config"
 	"github.com/xmpanel/xmpanel/internal/security/crypto"
+	"github.com/xmpanel/xmpanel/internal/security/password"
 	"github.com/xmpanel/xmpanel/internal/store"
 	"github.com/xmpanel/xmpanel/internal/store/models"
 
@@ -114,7 +115,8 @@ func New(cfg *config.Config, db *store.DB, logger *zap.Logger) http.Handler {
 		cfg.Security.RateLimit.LoginWindow,
 	)
 
-	// Apply global middlewares
+	// Apply global middlewares (order matters: recovery should be outermost)
+	router.Use(middleware.Recovery(logger))
 	router.Use(middleware.SecurityHeaders)
 	router.Use(middleware.RequestID)
 	router.Use(corsMiddleware.Handle)
@@ -122,8 +124,11 @@ func New(cfg *config.Config, db *store.DB, logger *zap.Logger) http.Handler {
 		router.Use(middleware.RateLimit(rateLimiter))
 	}
 
+	// Initialize password validator
+	passwordValidator := password.NewValidator(cfg.Security.Password)
+
 	// Initialize handlers
-	authHandler := handler.NewAuthHandler(db, jwtManager, hasher, loginLimiter, logger)
+	authHandler := handler.NewAuthHandler(db, jwtManager, hasher, passwordValidator, loginLimiter, logger)
 	userHandler := handler.NewUserHandler(db, hasher, keyRing, logger)
 	serverHandler := handler.NewServerHandler(db, keyRing, logger)
 	xmppHandler := handler.NewXMPPHandler(db, keyRing, logger)
