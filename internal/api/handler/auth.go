@@ -73,7 +73,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		SELECT id, username, email, password_hash, role, mfa_enabled, mfa_secret,
 		       failed_login_attempts, locked_until, last_login_at, last_login_ip,
 		       created_at, updated_at
-		FROM users WHERE username = ?
+		FROM users WHERE username = $1
 	`, req.Username).Scan(
 		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.Role,
 		&user.MFAEnabled, &user.MFASecret, &user.FailedLoginAttempts, &user.LockedUntil,
@@ -102,8 +102,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// Record failed attempt
 		h.db.Exec(`
 			UPDATE users SET failed_login_attempts = failed_login_attempts + 1,
-			       locked_until = CASE WHEN failed_login_attempts >= 4 THEN datetime('now', '+15 minutes') ELSE locked_until END
-			WHERE id = ?
+			       locked_until = CASE WHEN failed_login_attempts >= 4 THEN NOW() + INTERVAL '15 minutes' ELSE locked_until END
+			WHERE id = $1
 		`, user.ID)
 		writeErrorI18n(w, http.StatusUnauthorized, locale, i18n.MsgInvalidCredentials)
 		return
@@ -154,7 +154,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Create session record
 	_, err = h.db.Exec(`
 		INSERT INTO sessions (user_id, session_id, ip_address, user_agent, expires_at)
-		VALUES (?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5)
 	`, user.ID, sessionID, r.RemoteAddr, r.UserAgent(), tokenPair.ExpiresAt.Add(7*24*time.Hour))
 	if err != nil {
 		h.logger.Error("failed to create session", zap.Error(err))
@@ -162,8 +162,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Update login info and reset failed attempts
 	h.db.Exec(`
-		UPDATE users SET last_login_at = ?, last_login_ip = ?, failed_login_attempts = 0, locked_until = NULL
-		WHERE id = ?
+		UPDATE users SET last_login_at = $1, last_login_ip = $2, failed_login_attempts = 0, locked_until = NULL
+		WHERE id = $3
 	`, time.Now(), r.RemoteAddr, user.ID)
 
 	// Clear rate limiter on success
@@ -209,7 +209,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	// Check if session still exists in database (hasn't been revoked)
 	var exists int
-	err = h.db.QueryRow(`SELECT 1 FROM sessions WHERE session_id = ? AND user_id = ?`,
+	err = h.db.QueryRow(`SELECT 1 FROM sessions WHERE session_id = $1 AND user_id = $2`,
 		claims.SessionID, claims.UserID).Scan(&exists)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -225,7 +225,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Check if user account is still valid
 	var userRole string
 	var lockedUntil sql.NullTime
-	err = h.db.QueryRow(`SELECT role, locked_until FROM users WHERE id = ?`, claims.UserID).
+	err = h.db.QueryRow(`SELECT role, locked_until FROM users WHERE id = $1`, claims.UserID).
 		Scan(&userRole, &lockedUntil)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -258,7 +258,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update session expiry
-	h.db.Exec(`UPDATE sessions SET expires_at = ? WHERE session_id = ?`,
+	h.db.Exec(`UPDATE sessions SET expires_at = $1 WHERE session_id = $2`,
 		tokenPair.ExpiresAt.Add(7*24*time.Hour), claims.SessionID)
 
 	writeJSON(w, http.StatusOK, tokenPair)
@@ -274,7 +274,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete session
-	_, err := h.db.Exec(`DELETE FROM sessions WHERE session_id = ?`, claims.SessionID)
+	_, err := h.db.Exec(`DELETE FROM sessions WHERE session_id = $1`, claims.SessionID)
 	if err != nil {
 		h.logger.Error("failed to delete session", zap.Error(err))
 	}
@@ -294,7 +294,7 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	err := h.db.QueryRow(`
 		SELECT id, username, email, role, mfa_enabled, last_login_at, last_login_ip, created_at, updated_at
-		FROM users WHERE id = ?
+		FROM users WHERE id = $1
 	`, claims.UserID).Scan(
 		&user.ID, &user.Username, &user.Email, &user.Role, &user.MFAEnabled,
 		&user.LastLoginAt, &user.LastLoginIP, &user.CreatedAt, &user.UpdatedAt,
@@ -326,7 +326,7 @@ func (h *AuthHandler) SetupMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store secret temporarily (not enabled yet)
-	_, err = h.db.Exec(`UPDATE users SET mfa_secret = ? WHERE id = ?`, secret.Secret, claims.UserID)
+	_, err = h.db.Exec(`UPDATE users SET mfa_secret = $1 WHERE id = $2`, secret.Secret, claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to store MFA secret", zap.Error(err))
 		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
@@ -355,7 +355,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 
 	// Get user's MFA secret
 	var secret sql.NullString
-	err := h.db.QueryRow(`SELECT mfa_secret FROM users WHERE id = ?`, claims.UserID).Scan(&secret)
+	err := h.db.QueryRow(`SELECT mfa_secret FROM users WHERE id = $1`, claims.UserID).Scan(&secret)
 	if err != nil || !secret.Valid {
 		writeErrorI18n(w, http.StatusBadRequest, locale, i18n.MsgMFANotEnabled)
 		return
@@ -369,7 +369,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enable MFA
-	_, err = h.db.Exec(`UPDATE users SET mfa_enabled = 1 WHERE id = ?`, claims.UserID)
+	_, err = h.db.Exec(`UPDATE users SET mfa_enabled = TRUE WHERE id = $1`, claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to enable MFA", zap.Error(err))
 		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
@@ -391,7 +391,7 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 		h.logger.Error("failed to hash recovery codes", zap.Error(err))
 	} else {
 		codesJSON, _ := json.Marshal(hashedCodes)
-		h.db.Exec(`UPDATE users SET recovery_codes = ? WHERE id = ?`, string(codesJSON), claims.UserID)
+		h.db.Exec(`UPDATE users SET recovery_codes = $1 WHERE id = $2`, string(codesJSON), claims.UserID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -421,7 +421,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	// Verify password
 	var passwordHash string
 	var mfaSecret sql.NullString
-	err := h.db.QueryRow(`SELECT password_hash, mfa_secret FROM users WHERE id = ?`, claims.UserID).
+	err := h.db.QueryRow(`SELECT password_hash, mfa_secret FROM users WHERE id = $1`, claims.UserID).
 		Scan(&passwordHash, &mfaSecret)
 	if err != nil {
 		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
@@ -444,7 +444,7 @@ func (h *AuthHandler) DisableMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Disable MFA
-	_, err = h.db.Exec(`UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, recovery_codes = NULL WHERE id = ?`, claims.UserID)
+	_, err = h.db.Exec(`UPDATE users SET mfa_enabled = FALSE, mfa_secret = NULL, recovery_codes = NULL WHERE id = $1`, claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to disable MFA", zap.Error(err))
 		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
@@ -480,7 +480,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	// Get current password hash
 	var currentHash string
-	err := h.db.QueryRow(`SELECT password_hash FROM users WHERE id = ?`, claims.UserID).Scan(&currentHash)
+	err := h.db.QueryRow(`SELECT password_hash FROM users WHERE id = $1`, claims.UserID).Scan(&currentHash)
 	if err != nil {
 		writeErrorI18n(w, http.StatusInternalServerError, locale, i18n.MsgInternalError)
 		return
@@ -502,7 +502,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update password
-	_, err = h.db.Exec(`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`,
+	_, err = h.db.Exec(`UPDATE users SET password_hash = $1, updated_at = $2 WHERE id = $3`,
 		newHash, time.Now(), claims.UserID)
 	if err != nil {
 		h.logger.Error("failed to update password", zap.Error(err))
@@ -511,7 +511,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Invalidate all other sessions
-	_, err = h.db.Exec(`DELETE FROM sessions WHERE user_id = ? AND session_id != ?`,
+	_, err = h.db.Exec(`DELETE FROM sessions WHERE user_id = $1 AND session_id != $2`,
 		claims.UserID, claims.SessionID)
 	if err != nil {
 		h.logger.Error("failed to invalidate sessions", zap.Error(err))

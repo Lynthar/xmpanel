@@ -74,7 +74,7 @@ func (h *ServerHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var server models.XMPPServer
 	err = h.db.QueryRow(`
 		SELECT id, name, type, host, port, tls_enabled, enabled, created_at, updated_at
-		FROM xmpp_servers WHERE id = ?
+		FROM xmpp_servers WHERE id = $1
 	`, id).Scan(
 		&server.ID, &server.Name, &server.Type, &server.Host, &server.Port,
 		&server.TLSEnabled, &server.Enabled, &server.CreatedAt, &server.UpdatedAt,
@@ -134,7 +134,7 @@ func (h *ServerHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Insert server
 	result, err := h.db.Exec(`
 		INSERT INTO xmpp_servers (name, type, host, port, api_key_encrypted, tls_enabled, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8)
 	`, req.Name, req.Type, req.Host, req.Port, encryptedAPIKey, req.TLSEnabled, time.Now(), time.Now())
 
 	if err != nil {
@@ -194,19 +194,21 @@ func (h *ServerHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	updates["updated_at"] = time.Now()
 
-	// Execute update
+	// Execute update with PostgreSQL numbered placeholders
 	query := "UPDATE xmpp_servers SET "
 	args := make([]interface{}, 0)
+	paramNum := 1
 	first := true
 	for col, val := range updates {
 		if !first {
 			query += ", "
 		}
-		query += col + " = ?"
+		query += col + " = $" + strconv.Itoa(paramNum)
 		args = append(args, val)
+		paramNum++
 		first = false
 	}
-	query += " WHERE id = ?"
+	query += " WHERE id = $" + strconv.Itoa(paramNum)
 	args = append(args, id)
 
 	result, err := h.db.Exec(query, args...)
@@ -234,7 +236,7 @@ func (h *ServerHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.db.Exec(`DELETE FROM xmpp_servers WHERE id = ?`, id)
+	result, err := h.db.Exec(`DELETE FROM xmpp_servers WHERE id = $1`, id)
 	if err != nil {
 		h.logger.Error("failed to delete server", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "Internal server error")

@@ -19,7 +19,7 @@ func GetXMPPAdapter(db *store.DB, keyRing *crypto.KeyRing, serverID int64) (adap
 
 	err := db.QueryRow(`
 		SELECT id, name, type, host, port, api_key_encrypted, tls_enabled, enabled
-		FROM xmpp_servers WHERE id = ?
+		FROM xmpp_servers WHERE id = $1
 	`, serverID).Scan(
 		&server.ID, &server.Name, &server.Type, &server.Host, &server.Port,
 		&encryptedAPIKey, &server.TLSEnabled, &server.Enabled,
