@@ -2,6 +2,7 @@ package password
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -92,7 +93,7 @@ func (v *Validator) ValidateAll(password string) []error {
 // GetRequirements returns a human-readable description of password requirements
 func (v *Validator) GetRequirements() string {
 	var reqs []string
-	reqs = append(reqs, "at least "+string(rune('0'+v.minLength/10))+string(rune('0'+v.minLength%10))+" characters")
+	reqs = append(reqs, "at least "+strconv.Itoa(v.minLength)+" characters")
 
 	if v.requireUpper {
 		reqs = append(reqs, "one uppercase letter")

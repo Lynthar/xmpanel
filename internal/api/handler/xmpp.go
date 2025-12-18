@@ -446,31 +446,7 @@ func (h *XMPPHandler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 
 // getAdapter creates an adapter for the given server ID
 func (h *XMPPHandler) getAdapter(serverID int64) (adapter.XMPPAdapter, error) {
-	var server models.XMPPServer
-	var encryptedAPIKey sql.NullString
-
-	err := h.db.QueryRow(`
-		SELECT id, name, type, host, port, api_key_encrypted, tls_enabled, enabled
-		FROM xmpp_servers WHERE id = ?
-	`, serverID).Scan(
-		&server.ID, &server.Name, &server.Type, &server.Host, &server.Port,
-		&encryptedAPIKey, &server.TLSEnabled, &server.Enabled,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Decrypt API key
-	var apiKey string
-	if encryptedAPIKey.Valid && h.keyRing != nil {
-		decrypted, err := h.keyRing.DecryptString(encryptedAPIKey.String)
-		if err != nil {
-			return nil, err
-		}
-		apiKey = decrypted
-	}
-
-	return newAdapter(&server, apiKey)
+	return GetXMPPAdapter(h.db, h.keyRing, serverID)
 }
 
 func (h *XMPPHandler) handleAdapterError(w http.ResponseWriter, err error) {
