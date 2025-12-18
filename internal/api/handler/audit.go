@@ -33,35 +33,42 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Build WHERE clause for reuse in both data and count queries
 	whereClause := " WHERE 1=1"
 	args := make([]interface{}, 0)
+	paramNum := 1
 
 	if userID := r.URL.Query().Get("user_id"); userID != "" {
-		whereClause += " AND user_id = ?"
+		whereClause += " AND user_id = $" + strconv.Itoa(paramNum)
 		args = append(args, userID)
+		paramNum++
 	}
 
 	if username := r.URL.Query().Get("username"); username != "" {
-		whereClause += " AND username LIKE ?"
+		whereClause += " AND username LIKE $" + strconv.Itoa(paramNum)
 		args = append(args, "%"+username+"%")
+		paramNum++
 	}
 
 	if action := r.URL.Query().Get("action"); action != "" {
-		whereClause += " AND action = ?"
+		whereClause += " AND action = $" + strconv.Itoa(paramNum)
 		args = append(args, action)
+		paramNum++
 	}
 
 	if resourceType := r.URL.Query().Get("resource_type"); resourceType != "" {
-		whereClause += " AND resource_type = ?"
+		whereClause += " AND resource_type = $" + strconv.Itoa(paramNum)
 		args = append(args, resourceType)
+		paramNum++
 	}
 
 	if startTime := r.URL.Query().Get("start_time"); startTime != "" {
-		whereClause += " AND created_at >= ?"
+		whereClause += " AND created_at >= $" + strconv.Itoa(paramNum)
 		args = append(args, startTime)
+		paramNum++
 	}
 
 	if endTime := r.URL.Query().Get("end_time"); endTime != "" {
-		whereClause += " AND created_at <= ?"
+		whereClause += " AND created_at <= $" + strconv.Itoa(paramNum)
 		args = append(args, endTime)
+		paramNum++
 	}
 
 	// Get total count with same filters
@@ -91,7 +98,7 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	dataQuery := `
 		SELECT id, user_id, username, action, resource_type, resource_id, details,
 		       ip_address, user_agent, request_id, prev_hash, hash, created_at
-		FROM audit_logs` + whereClause + " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+		FROM audit_logs` + whereClause + " ORDER BY created_at DESC LIMIT $" + strconv.Itoa(paramNum) + " OFFSET $" + strconv.Itoa(paramNum+1)
 
 	dataArgs := append(args, limit, offset)
 
@@ -146,14 +153,17 @@ func (h *AuditHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		FROM audit_logs WHERE 1=1
 	`
 	args := make([]interface{}, 0)
+	paramNum := 1
 
 	if startID > 0 {
-		query += " AND id >= ?"
+		query += " AND id >= $" + strconv.Itoa(paramNum)
 		args = append(args, startID)
+		paramNum++
 	}
 	if endID > 0 {
-		query += " AND id <= ?"
+		query += " AND id <= $" + strconv.Itoa(paramNum)
 		args = append(args, endID)
+		paramNum++
 	}
 
 	query += " ORDER BY id ASC LIMIT 10000"
@@ -213,20 +223,24 @@ func (h *AuditHandler) Export(w http.ResponseWriter, r *http.Request) {
 		FROM audit_logs WHERE 1=1
 	`
 	args := make([]interface{}, 0)
+	paramNum := 1
 
 	if action := r.URL.Query().Get("action"); action != "" {
-		query += " AND action = ?"
+		query += " AND action = $" + strconv.Itoa(paramNum)
 		args = append(args, action)
+		paramNum++
 	}
 
 	if startTime := r.URL.Query().Get("start_time"); startTime != "" {
-		query += " AND created_at >= ?"
+		query += " AND created_at >= $" + strconv.Itoa(paramNum)
 		args = append(args, startTime)
+		paramNum++
 	}
 
 	if endTime := r.URL.Query().Get("end_time"); endTime != "" {
-		query += " AND created_at <= ?"
+		query += " AND created_at <= $" + strconv.Itoa(paramNum)
 		args = append(args, endTime)
+		paramNum++
 	}
 
 	query += " ORDER BY created_at DESC LIMIT 10000"
@@ -342,7 +356,7 @@ func (s *AuditService) Log(entry *models.AuditLogEntry) error {
 	_, err = tx.Exec(`
 		INSERT INTO audit_logs (user_id, username, action, resource_type, resource_id,
 		                        details, ip_address, user_agent, request_id, prev_hash, hash, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, entry.UserID, entry.Username, entry.Action, entry.ResourceType, entry.ResourceID,
 		detailsJSON, entry.IPAddress, entry.UserAgent, entry.RequestID, prevHash, hash, timestamp)
 
