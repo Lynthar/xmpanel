@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
@@ -308,25 +309,28 @@ func (s *AuditService) Log(entry *models.AuditLogEntry) error {
 		s.logger.Error("failed to begin transaction", zap.Error(err))
 		return err
 	}
+
+	// Track whether we need to rollback
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			tx.Rollback()
 		}
 	}()
 
 	// Get the previous hash within the transaction (with lock)
 	var prevHash string
-	err = tx.QueryRow(`SELECT hash FROM audit_logs ORDER BY id DESC LIMIT 1`).Scan(&prevHash)
-	if err != nil && err.Error() != "sql: no rows in result set" {
-		s.logger.Warn("failed to get previous audit hash", zap.Error(err))
+	if err := tx.QueryRow(`SELECT hash FROM audit_logs ORDER BY id DESC LIMIT 1`).Scan(&prevHash); err != nil {
+		if err != sql.ErrNoRows {
+			s.logger.Warn("failed to get previous audit hash", zap.Error(err))
+		}
 		// Continue anyway - first entry won't have a prev hash
-		err = nil
+		prevHash = ""
 	}
 
 	// Get next ID within the transaction
 	var nextID int64
-	err = tx.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM audit_logs`).Scan(&nextID)
-	if err != nil {
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(id), 0) + 1 FROM audit_logs`).Scan(&nextID); err != nil {
 		s.logger.Error("failed to get next ID", zap.Error(err))
 		return err
 	}
@@ -353,5 +357,6 @@ func (s *AuditService) Log(entry *models.AuditLogEntry) error {
 		return err
 	}
 
+	committed = true
 	return nil
 }
