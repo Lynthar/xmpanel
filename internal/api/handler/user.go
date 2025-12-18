@@ -74,7 +74,7 @@ func (h *UserHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	err = h.db.QueryRow(`
 		SELECT id, username, email, role, mfa_enabled, last_login_at, last_login_ip, created_at, updated_at
-		FROM users WHERE id = ?
+		FROM users WHERE id = $1
 	`, id).Scan(
 		&user.ID, &user.Username, &user.Email, &user.Role, &user.MFAEnabled,
 		&user.LastLoginAt, &user.LastLoginIP, &user.CreatedAt, &user.UpdatedAt,
@@ -113,7 +113,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Check if username or email exists
 	var exists int
-	h.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = ? OR email = ?`, req.Username, req.Email).Scan(&exists)
+	h.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = $1 OR email = $2`, req.Username, req.Email).Scan(&exists)
 	if exists > 0 {
 		writeError(w, http.StatusConflict, "Username or email already exists")
 		return
@@ -130,7 +130,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Insert user
 	result, err := h.db.Exec(`
 		INSERT INTO users (username, email, password_hash, role, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`, req.Username, req.Email, passwordHash, req.Role, time.Now(), time.Now())
 
 	if err != nil {
@@ -191,19 +191,21 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	updates["updated_at"] = time.Now()
 
-	// Execute update
+	// Execute update with PostgreSQL numbered placeholders
 	query := "UPDATE users SET "
 	args := make([]interface{}, 0)
+	paramNum := 1
 	first := true
 	for col, val := range updates {
 		if !first {
 			query += ", "
 		}
-		query += col + " = ?"
+		query += col + " = $" + strconv.Itoa(paramNum)
 		args = append(args, val)
+		paramNum++
 		first = false
 	}
-	query += " WHERE id = ?"
+	query += " WHERE id = $" + strconv.Itoa(paramNum)
 	args = append(args, id)
 
 	result, err := h.db.Exec(query, args...)
@@ -236,14 +238,14 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'superadmin'`).Scan(&superadminCount)
 
 	var userRole string
-	h.db.QueryRow(`SELECT role FROM users WHERE id = ?`, id).Scan(&userRole)
+	h.db.QueryRow(`SELECT role FROM users WHERE id = $1`, id).Scan(&userRole)
 
 	if userRole == string(models.RoleSuperAdmin) && superadminCount <= 1 {
 		writeError(w, http.StatusForbidden, "Cannot delete the last superadmin")
 		return
 	}
 
-	result, err := h.db.Exec(`DELETE FROM users WHERE id = ?`, id)
+	result, err := h.db.Exec(`DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
 		h.logger.Error("failed to delete user", zap.Error(err))
 		writeError(w, http.StatusInternalServerError, "Internal server error")

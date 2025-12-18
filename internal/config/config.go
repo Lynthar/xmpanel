@@ -217,12 +217,12 @@ func applyDefaults(cfg *Config) {
 		cfg.Server.Address = ":8080"
 	}
 
-	// Database defaults
+	// Database defaults (PostgreSQL)
 	if cfg.Database.Driver == "" {
-		cfg.Database.Driver = "sqlite"
+		cfg.Database.Driver = "postgres"
 	}
 	if cfg.Database.DSN == "" {
-		cfg.Database.DSN = "xmpanel.db"
+		cfg.Database.DSN = "host=localhost port=5432 user=xmpanel password=xmpanel dbname=xmpanel sslmode=disable"
 	}
 	if cfg.Database.MaxOpenConns == 0 {
 		cfg.Database.MaxOpenConns = 25
